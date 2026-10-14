@@ -1,0 +1,6 @@
+line-bot-sdk>=3.26
+flask>=3.0
+gunicorn>=23.0
+python-dotenv>=1.0
+yfinance>=0.2.60
+requests>=2.31

@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: line-market-bot
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.9
+      - key: TW_WATCHLIST
+        value: 2330,2317,2454,6488
+      - key: US_WATCHLIST
+        value: NVDA,AAPL,MSFT,TSM
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: CRON_SECRET
+        sync: false
