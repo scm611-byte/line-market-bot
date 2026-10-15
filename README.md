@@ -7,6 +7,9 @@
   - 美股：台北週二～六 06:30
   - GitHub 排程可能延遲 5～30 分鐘；非交易日自動跳過
 - 推播用 LINE **broadcast**，對象是 Bot 的所有好友，不需儲存訂閱名單
+- 推播內容是兩張圖（`charts.py`）：盤後摘要卡、近 1 個月日 K 線（含 MA5／MA20，紅漲綠跌）。
+  圖片由 `/img/<名稱>.png` 提供給 LINE 抓取；畫圖失敗時改送文字版
+- `fonts/` 內是 Noto Sans TC（SIL Open Font License），讓雲端主機能顯示中文
 
 ## 設定值
 | 名稱 | 放在 | 說明 |
@@ -28,6 +31,7 @@ cp .env.example .env   # 填入金鑰
 .venv/bin/python app.py
 ngrok http 5000
 ```
+本機測圖片推播時，`.env` 要加 `PUBLIC_URL=<ngrok 網址>`。
 
 ## 注意
 - Render 免費方案閒置 15 分鐘會休眠，喚醒約 30～60 秒；休眠中傳的第一則訊息可能沒有回應，再傳一次即可。
