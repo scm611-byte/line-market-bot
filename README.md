@@ -26,7 +26,8 @@
 
 ## 1. 每天什麼時候推播
 
-- **週一到週五 16:00 左右**（台北時間）。GitHub 的排程常會延遲 5～30 分鐘。
+- **週一到週五 16:05**（台北時間），由 [cron-job.org](https://console.cron-job.org/jobs) 準時觸發（16:00 先叫醒休眠中的 Render）。
+- **備援**：GitHub Actions 在 16:17 之後也會觸發一次（GitHub 的排程常延遲數小時）。Bot 一天只推一次，所以不會收到兩份。
 - **休市日不推播**：會先檢查證交所當天有沒有行情，沒有就跳過。
 - 想手動推播一次：到 GitHub repo → **Actions** → 左邊選「台股盤後推播」→ 右邊 **Run workflow** → 綠色 **Run workflow**。
 - 推播一次算 LINE 官方帳號 1 則訊息（三張圖一起送）；免費方案每月 200 則，一個月約用 22 則。
@@ -179,7 +180,12 @@
 
 **Q：今天沒收到推播？**
 1. 先確認是不是休市日。
-2. 到 GitHub → Actions → 台股盤後推播，看今天那一次的結果：
+2. 到 [cron-job.org](https://console.cron-job.org/jobs) →「LINE Bot 台股盤後推播」→ **HISTORY**，看 16:05 那次的結果：
+   - `200` 且內容是 `TW pushed`：已送出。
+   - `200` 且內容是 `already pushed today`：今天已經推過了（可能被 GitHub 備援先推了）。
+   - `204`：Bot 判斷今天沒有行情（休市或證交所資料還沒公布）。
+   - `Timeout`：Render 喚醒太慢；GitHub 備援會在 16:17 之後補推。
+3. 也可以到 GitHub → Actions → 台股盤後推播，看備援那一次的結果：
    - 綠色勾、最後一行 `HTTP 200`：已送出，可能是 LINE 那邊延遲。
    - 最後一行 `HTTP 204`：Bot 判斷今天沒有行情（休市或證交所資料還沒公布）。
    - 紅色叉叉：點進去看錯誤；常見原因是 Render 正在維護或喚醒失敗，可以按 **Re-run jobs** 重跑。
@@ -199,15 +205,16 @@ FinMind 額度用完或 token 失效。到 FinMind 網站 → 使用者資訊確
 Yahoo Finance 偶爾抓不到資料，或那檔股票當天停牌。隔天通常會恢復。
 
 **Q：想換推播時間？**
-改 `.github/workflows/push.yml` 裡的 `cron`。GitHub 用 UTC 時間，台北時間要減 8 小時，例如台北 17:30 → `30 9 * * 1-5`。
+1. 到 [cron-job.org](https://console.cron-job.org/jobs)，兩個排程都按 **EDIT** → Execution schedule 的 Crontab expression 改時間（時區已經是 Asia/Taipei）。「叫醒」要比「推播」早 5 分鐘，例如 `55 16 * * 1-5` 和 `0 17 * * 1-5`。
+2. 備援的 GitHub 排程在 `.github/workflows/push.yml` 的 `cron`，GitHub 用 UTC 時間（台北時間減 8 小時），建議設在 cron-job.org 之後十幾分鐘，避開整點。
 
 ---
 
 ## 8. 系統架構與設定（維護用）
 
 ```
-GitHub Actions（每個交易日 16:00）
-   │  POST /tasks/tw（帶 CRON_SECRET）
+cron-job.org（週一～五 16:00 叫醒、16:05 推播）＋ GitHub Actions（16:17 備援）
+   │  POST /tasks/tw（帶 X-Cron-Secret header）；同一天只推一次（data/portfolio.json 的 last_push）
    ▼
 Render 免費 Web Service（app.py）
    ├─ 證交所 / 櫃買 / Yahoo Finance：大盤、自選股、日 K
@@ -238,7 +245,7 @@ Render 免費 Web Service（app.py）
 | `GITHUB_TOKEN` | Render → Environment | 讀寫 `data/portfolio.json` 用，見下方 |
 | `FINMIND_TOKEN` | Render → Environment | 期貨報價用；FinMind 免費帳號 → 使用者資訊 → api token（沒帶的話雲端主機會被擋 402） |
 | `GITHUB_REPO` | `render.yaml` | 預設 `scm611-byte/line-market-bot` |
-| `CRON_SECRET` | Render → Environment **和** GitHub → Settings → Secrets | 保護 `/tasks/tw` 的隨機字串，兩邊要一樣 |
+| `CRON_SECRET` | Render → Environment、GitHub → Settings → Secrets、cron-job.org 推播排程的 Header `X-Cron-Secret` | 保護 `/tasks/tw` 的隨機字串，兩邊要一樣 |
 | `BOT_URL` | GitHub → Settings → Secrets | Render 服務網址 |
 
 LINE Webhook URL 設為 `<BOT_URL>/callback`。
