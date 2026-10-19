@@ -25,7 +25,7 @@
 flowchart TB
     subgraph sched["⏰ 排程・週一～五"]
         direction LR
-        cron["cron-job.org<br/>16:00 叫醒・16:05 推播"]
+        cron["cron-job.org<br/>14:00 起每 15 分鐘・資料齊就推"]
         gha["GitHub Actions<br/>16:17 備援"]
     end
 
@@ -72,8 +72,12 @@ flowchart TB
 
 ## 1. 每天什麼時候推播
 
-- **週一到週五 16:05**（台北時間），由 [cron-job.org](https://console.cron-job.org/jobs) 準時觸發（16:00 先叫醒休眠中的 Render）。
+- **週一到週五，資料一到齊就推**，通常在 **14:30～15:30** 之間（台北時間）。
+  - [cron-job.org](https://console.cron-job.org/jobs) 從 14:00 起每 15 分鐘觸發一次（13:55 先叫醒休眠中的 Render）。
+  - 每次觸發，Bot 會檢查證交所行情、自選股與庫存股票的收盤價、期貨結算價**是否都已更新到當天**；有缺就先不推，等下一次。
+  - **16:00 是最後期限**：還有沒到齊的也照推，缺的部分用前一個交易日的價格（圖上期貨會標示資料日期）。
 - **備援**：GitHub Actions 在 16:17 之後也會觸發一次（GitHub 的排程常延遲數小時）。Bot 一天只推一次，所以不會收到兩份。
+- 每次推播的時間記錄在 `data/portfolio.json` 的 `push_log`，可以看出資料大約幾點到齊。
 - **休市日不推播**：會先檢查證交所當天有沒有行情，沒有就跳過。
 - 想手動推播一次：到 GitHub repo → **Actions** → 左邊選「台股盤後推播」→ 右邊 **Run workflow** → 綠色 **Run workflow**。
 - 推播一次算 LINE 官方帳號 1 則訊息（三張圖一起送）；免費方案每月 200 則，一個月約用 22 則。
@@ -226,11 +230,12 @@ flowchart TB
 
 **Q：今天沒收到推播？**
 1. 先確認是不是休市日。
-2. 到 [cron-job.org](https://console.cron-job.org/jobs) →「LINE Bot 台股盤後推播」→ **HISTORY**，看 16:05 那次的結果：
-   - `200` 且內容是 `TW pushed`：已送出。
-   - `200` 且內容是 `already pushed today`：今天已經推過了（可能被 GitHub 備援先推了）。
-   - `204`：Bot 判斷今天沒有行情（休市或證交所資料還沒公布）。
-   - `Timeout`：Render 喚醒太慢；GitHub 備援會在 16:17 之後補推。
+2. 到 [cron-job.org](https://console.cron-job.org/jobs) →「LINE Bot 台股盤後推播」→ **HISTORY**，看 14:00～16:00 每一次的結果：
+   - `200` 且內容是 `TW pushed`：已送出（後面有 `stale` 代表 16:00 強制推播時還有資料沒到齊）。
+   - `200` 且內容是 `already pushed today`：今天已經推過了。
+   - `202` 且內容是 `waiting for: …`：還在等這些資料更新，下一次會再試。
+   - `204`：證交所今天沒有行情（休市，或 14:30 前還沒公布）。
+   - `Timeout`：Render 喚醒太慢，下一次會再試。
 3. 也可以到 GitHub → Actions → 台股盤後推播，看備援那一次的結果：
    - 綠色勾、最後一行 `HTTP 200`：已送出，可能是 LINE 那邊延遲。
    - 最後一行 `HTTP 204`：Bot 判斷今天沒有行情（休市或證交所資料還沒公布）。
@@ -251,8 +256,9 @@ FinMind 額度用完或 token 失效。到 FinMind 網站 → 使用者資訊確
 Yahoo Finance 偶爾抓不到資料，或那檔股票當天停牌。隔天通常會恢復。
 
 **Q：想換推播時間？**
-1. 到 [cron-job.org](https://console.cron-job.org/jobs)，兩個排程都按 **EDIT** → Execution schedule 的 Crontab expression 改時間（時區已經是 Asia/Taipei）。「叫醒」要比「推播」早 5 分鐘，例如 `55 16 * * 1-5` 和 `0 17 * * 1-5`。
-2. 備援的 GitHub 排程在 `.github/workflows/push.yml` 的 `cron`，GitHub 用 UTC 時間（台北時間減 8 小時），建議設在 cron-job.org 之後十幾分鐘，避開整點。
+1. 到 [cron-job.org](https://console.cron-job.org/jobs)，兩個排程都按 **EDIT** → Execution schedule 的 Crontab expression 改時間（時區已經是 Asia/Taipei）。目前是叫醒 `55 13 * * 1-5`、推播 `*/15 14-16 * * 1-5`（14:00～16:45 每 15 分鐘）。
+2. 最後期限在 `app.py` 的 `FORCE_PUSH_AT`（預設 `"16:00"`）。
+3. 備援的 GitHub 排程在 `.github/workflows/push.yml` 的 `cron`，GitHub 用 UTC 時間（台北時間減 8 小時），建議設在 cron-job.org 之後十幾分鐘，避開整點。
 
 ---
 
@@ -271,20 +277,25 @@ sequenceDiagram
     participant D as 證交所／Yahoo／FinMind
     participant L as LINE
 
-    C->>B: 16:00 GET /（叫醒休眠的主機）
-    C->>B: 16:05 POST /tasks/tw（X-Cron-Secret）
+    C->>B: 13:55 GET /（叫醒休眠的主機）
+    loop 14:00 起每 15 分鐘
+    C->>B: POST /tasks/tw（X-Cron-Secret）
     B->>G: 讀 portfolio.json
     alt 今天已推播過（last_push = 今天）
         B-->>C: 200 already pushed today
     else 今天休市／證交所還沒公布
         B-->>C: 204
-    else
+    else 有資料還沒更新到當天，且還沒到 16:00
+        B->>D: 抓大盤、自選股日 K、庫存報價、期貨結算價
+        B-->>C: 202 waiting for …（下一次再試）
+    else 資料都到齊（或已經 16:00）
         B->>D: 抓大盤、自選股日 K、庫存報價、期貨結算價
         B->>B: 畫三張圖，存在 /img/…（網址帶簽章）
         B->>L: push 三張圖給 OWNER_USER_ID
         L->>B: 抓圖片
-        B->>G: 記錄 last_push = 今天
+        B->>G: 記錄 last_push、push_log
         B-->>C: 200 TW pushed
+    end
     end
     Note over B,G: GitHub Actions 16:17 之後再觸發一次當備援，<br/>因為有 last_push 檢查，不會重複推播
 ```
