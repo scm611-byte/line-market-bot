@@ -166,10 +166,18 @@ def image(name: str):
 def task_tw():
     if not hmac.compare_digest(request.headers.get("X-Cron-Secret", ""), CRON_SECRET):
         abort(403)
+    # 排程可能有好幾個來源（cron-job.org、GitHub Actions 備援），同一個交易日只推一次
+    today = datetime.now(TPE).date().isoformat()
+    data, _ = portfolio.load()
+    if data.get("last_push") == today:
+        return "already pushed today"
     msgs = market_messages()
     if msgs is None:
         return "TW market closed or data not ready", 204
     push(msgs)
+    data, sha = portfolio.load()
+    data["last_push"] = today
+    portfolio.save(data, sha, f"已推播 {today}")
     return "TW pushed"
 
 

@@ -2,7 +2,9 @@ name: 台股盤後推播
 
 on:
   schedule:
-    - cron: "0 8 * * 1-5"  # 台北 週一～五 16:00（GitHub 用 UTC）
+    # 主要排程在 cron-job.org（準時）；這裡是備援，GitHub 排程常延遲數小時。
+    # Bot 端一天只會推一次，兩邊都觸發也不會重複。
+    - cron: "17 8 * * 1-5"  # 台北 週一～五 16:17（GitHub 用 UTC）
   workflow_dispatch:
 
 jobs:
