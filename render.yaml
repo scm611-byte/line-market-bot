@@ -27,3 +27,5 @@ services:
         value: U210e34a9b98fe1aae8cd71da8bd1fa25
       - key: GITHUB_TOKEN
         sync: false
+      - key: FINMIND_TOKEN
+        sync: false

@@ -192,6 +192,9 @@ Render 免費方案閒置 15 分鐘會休眠，第一則訊息要等 30～60 秒
 - 訊息裡有 `401` 或 `Bad credentials`：GitHub token 過期或被刪了，照[第 8 節](#8-系統架構與設定維護用)重新建立，再更新 Render 的 `GITHUB_TOKEN`。
 - 訊息裡有 `JSON`：`portfolio.json` 格式改壞了，到 GitHub 還原。
 
+**Q：期貨顯示「期貨報價暫時抓不到」？**
+FinMind 額度用完或 token 失效。到 FinMind 網站 → 使用者資訊確認 token，必要時按「更新 token」，再更新 Render 的 `FINMIND_TOKEN`。
+
 **Q：股票顯示「查無報價」？**
 Yahoo Finance 偶爾抓不到資料，或那檔股票當天停牌。隔天通常會恢復。
 
@@ -233,6 +236,7 @@ Render 免費 Web Service（app.py）
 | `LINE_CHANNEL_ACCESS_TOKEN` | Render → Environment | LINE Developers → Messaging API → Channel access token |
 | `OWNER_USER_ID` | `render.yaml` | 你的 LINE user ID（LINE Developers → Basic settings → Your user ID） |
 | `GITHUB_TOKEN` | Render → Environment | 讀寫 `data/portfolio.json` 用，見下方 |
+| `FINMIND_TOKEN` | Render → Environment | 期貨報價用；FinMind 免費帳號 → 使用者資訊 → api token（沒帶的話雲端主機會被擋 402） |
 | `GITHUB_REPO` | `render.yaml` | 預設 `scm611-byte/line-market-bot` |
 | `CRON_SECRET` | Render → Environment **和** GitHub → Settings → Secrets | 保護 `/tasks/tw` 的隨機字串，兩邊要一樣 |
 | `BOT_URL` | GitHub → Settings → Secrets | Render 服務網址 |
