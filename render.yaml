@@ -12,6 +12,7 @@ services:
       ignoredPaths:
         - data/**
         - README.md
+        - docs/**
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.9

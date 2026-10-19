@@ -10,6 +10,51 @@
 
 這個 Bot **只服務你一個人**：推播只發給你的 LINE 帳號，其他人加好友或傳訊息只會收到「私人 Bot」的回覆，也查不到你的庫存。
 
+### 畫面預覽
+
+| 1. 台股盤後 | 2. 近 1 個月日 K | 3. 我的庫存 |
+|:---:|:---:|:---:|
+| <img src="docs/images/summary.png" width="270" alt="台股盤後摘要"> | <img src="docs/images/kline.png" width="270" alt="近 1 個月日 K 線"> | <img src="docs/images/holdings.png" width="270" alt="我的庫存損益"> |
+| 大盤與自選股收盤 | 加權指數＋自選股，MA20 | 股票＋期貨的當日／未實現損益 |
+
+<sub>範例圖為 2026/10/19 的真實行情；庫存是示範用的假資料。點圖可放大。</sub>
+
+### 運作方式
+
+```mermaid
+flowchart LR
+    you(["📱 你的 LINE"])
+
+    subgraph sched["⏰ 排程（週一～五）"]
+        cron["cron-job.org<br/>16:00 叫醒・16:05 推播"]
+        gha["GitHub Actions<br/>16:17 備援"]
+    end
+
+    subgraph render["☁️ Render 免費主機"]
+        bot["LINE Bot<br/>app.py"]
+        img["畫圖<br/>charts.py"]
+    end
+
+    subgraph data["📊 資料來源"]
+        twse["證交所／櫃買中心<br/>加權指數・成交金額・股票名稱"]
+        yahoo["Yahoo Finance<br/>個股收盤・日 K"]
+        finmind["FinMind<br/>期貨結算價"]
+    end
+
+    repo[("GitHub repo<br/>data/portfolio.json<br/>自選股・庫存")]
+    line["LINE 平台"]
+
+    cron -->|POST /tasks/tw| bot
+    gha -.->|備援| bot
+    bot --> twse & yahoo & finmind
+    bot <-->|讀寫| repo
+    bot --> img
+    bot -->|推播三張圖| line
+    line --> you
+    you -->|指令：台股、庫存、買、多…| line
+    line -->|webhook| bot
+```
+
 ---
 
 ## 目錄
@@ -212,16 +257,55 @@ Yahoo Finance 偶爾抓不到資料，或那檔股票當天停牌。隔天通常
 
 ## 8. 系統架構與設定（維護用）
 
+開頭的〈運作方式〉是整體架構；下面兩張是細部流程。
+
+### 每日推播流程
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as cron-job.org
+    participant B as Render（app.py）
+    participant G as GitHub repo
+    participant D as 證交所／Yahoo／FinMind
+    participant L as LINE
+
+    C->>B: 16:00 GET /（叫醒休眠的主機）
+    C->>B: 16:05 POST /tasks/tw（X-Cron-Secret）
+    B->>G: 讀 portfolio.json
+    alt 今天已推播過（last_push = 今天）
+        B-->>C: 200 already pushed today
+    else 今天休市／證交所還沒公布
+        B-->>C: 204
+    else
+        B->>D: 抓大盤、自選股日 K、庫存報價、期貨結算價
+        B->>B: 畫三張圖，存在 /img/…（網址帶簽章）
+        B->>L: push 三張圖給 OWNER_USER_ID
+        L->>B: 抓圖片
+        B->>G: 記錄 last_push = 今天
+        B-->>C: 200 TW pushed
+    end
+    Note over B,G: GitHub Actions 16:17 之後再觸發一次當備援，<br/>因為有 last_push 檢查，不會重複推播
 ```
-cron-job.org（週一～五 16:00 叫醒、16:05 推播）＋ GitHub Actions（16:17 備援）
-   │  POST /tasks/tw（帶 X-Cron-Secret header）；同一天只推一次（data/portfolio.json 的 last_push）
-   ▼
-Render 免費 Web Service（app.py）
-   ├─ 證交所 / 櫃買 / Yahoo Finance：大盤、自選股、日 K
-   ├─ FinMind：期貨結算價、個股期貨代號（期交所 OpenAPI 擋海外雲端主機）
-   ├─ GitHub API：讀寫 data/portfolio.json
-   ├─ 畫三張圖（charts.py），放在 /img/…（網址帶簽章）
-   └─ LINE push → 只發給 OWNER_USER_ID
+
+### LINE 指令流程
+
+```mermaid
+sequenceDiagram
+    participant U as 你
+    participant L as LINE
+    participant B as Render（app.py）
+    participant G as GitHub repo
+
+    U->>L: 買 2330 2 1050
+    L->>B: webhook（LINE 簽章驗證）
+    B->>B: 確認是 OWNER_USER_ID，其他人一律回「私人 Bot」
+    B->>G: 讀 portfolio.json
+    B->>B: 計算新的張數與平均成本
+    B->>G: 寫回 portfolio.json（commit「LINE：買 2330 2 1050」）
+    B->>L: 回覆「✅ 台積電 2330：2 張，平均成本 1,050.00」
+    L->>U: 顯示回覆
+    Note over B,G: data/** 的變更不會觸發 Render 重新部署
 ```
 
 | 檔案 | 用途 |
