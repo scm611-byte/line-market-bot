@@ -170,6 +170,7 @@ class Position:
     unrealized: float = 0.0
     value: float = 0.0  # 股票市值
     note: str = ""
+    data_date: date | None = None  # 報價是哪一天的（用來判斷資料是否已更新到當天）
 
     @property
     def pct(self) -> float:
@@ -218,6 +219,7 @@ def build_holdings(data: dict, trade_date: date) -> Holdings:
             p = Position("股票", stock_label(code), qty_text(shares), cost, None, None)
             if (df := hist.get(tickers[code])) is not None:
                 p.price, p.prev = float(df["Close"].iloc[-1]), float(df["Close"].iloc[-2])
+                p.data_date = df.index[-1].date()
                 p.day_pnl = (p.price - p.prev) * shares
                 p.unrealized = (p.price - cost) * shares
                 p.value = p.price * shares
@@ -243,6 +245,7 @@ def build_holdings(data: dict, trade_date: date) -> Holdings:
             else:
                 p_note = "已到期或查無報價"
             h.futures_date = fdate or h.futures_date
+            p.data_date = fdate
             if (q := quotes.get(month)) and mult:
                 p.price, p.prev = q
                 p.day_pnl = (p.price - p.prev) * qty * mult * sign
