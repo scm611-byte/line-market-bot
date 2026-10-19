@@ -81,7 +81,13 @@ def save(data: dict, sha: str | None, message: str) -> None:
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 
 
+FINMIND_TOKEN = os.getenv("FINMIND_TOKEN", "")
+
+
 def _finmind(dataset: str, **params) -> list[dict]:
+    # 沒帶 token 時 FinMind 以 IP 計算額度，雲端主機的共用 IP 很快就會被擋（402）
+    if FINMIND_TOKEN:
+        params["token"] = FINMIND_TOKEN
     r = get_json(FINMIND_URL, dataset=dataset, **params)
     if r.get("status") != 200:
         raise RuntimeError(f"FinMind：{r.get('msg')}")
@@ -221,19 +227,28 @@ def build_holdings(data: dict, trade_date: date) -> Holdings:
 
     if data["futures"]:
         for contract, pos in data["futures"].items():
-            spec = futures_spec(contract)
+            try:
+                spec = futures_spec(contract)
+            except Exception:
+                spec = None
             name, mult = (spec[1], spec[2]) if spec else (contract, 0)
             sign = 1 if pos["side"] == "多" else -1
             qty, cost, month = int(pos["qty"]), float(pos["cost"]), pos.get("month", "")
             p = Position("期貨", f"{name} {contract} {month}", f"{pos['side']} {qty} 口", cost, None, None)
-            fdate, quotes = _futures_daily(contract, until=trade_date)
+            try:
+                fdate, quotes = _futures_daily(contract, until=trade_date)
+            except Exception:
+                fdate, quotes = None, {}
+                p_note = "期貨報價暫時抓不到"
+            else:
+                p_note = "已到期或查無報價"
             h.futures_date = fdate or h.futures_date
             if (q := quotes.get(month)) and mult:
                 p.price, p.prev = q
                 p.day_pnl = (p.price - p.prev) * qty * mult * sign
                 p.unrealized = (p.price - cost) * qty * mult * sign
             else:
-                p.note = "已到期或查無報價"
+                p.note = p_note
             h.futures.append(p)
     return h
 
