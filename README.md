@@ -24,18 +24,18 @@
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
 flowchart TB
-    cron["cron-job.org<br/>14:00 起每 15 分鐘・資料齊就推"]
+    cron["cron-job.org<br/>14:00 起每 15 分"]
     gha["GitHub Actions<br/>16:17 備援"]
-    bot["Render 免費主機・LINE Bot<br/>抓資料・算損益・畫三張圖"]
-    data["資料來源<br/>證交所／櫃買・Yahoo Finance・FinMind"]
-    repo[("GitHub repo<br/>portfolio.json 自選股・庫存")]
+    bot["LINE Bot（Render）<br/>抓資料・算損益・畫圖"]
+    data["資料來源<br/>證交所・Yahoo・FinMind"]
+    repo[("GitHub repo<br/>自選股・庫存")]
     you(["你的 LINE"])
 
     cron -->|觸發推播| bot
     gha -.->|備援| bot
     bot --> data
     bot <-->|讀寫| repo
-    bot <-->|推播三張圖／指令與回覆| you
+    bot <-->|推播／指令| you
 ```
 
 ---
