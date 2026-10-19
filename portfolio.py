@@ -15,7 +15,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -76,13 +76,30 @@ def save(data: dict, sha: str | None, message: str) -> None:
 
 
 # ---------- 期貨資料 ----------
+# 期交所 OpenAPI 會擋海外雲端主機（Render 在新加坡），改用 FinMind 的期貨日行情
+FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+
+
+def _finmind(dataset: str, **params) -> list[dict]:
+    r = get_json(FINMIND_URL, dataset=dataset, **params)
+    if r.get("status") != 200:
+        raise RuntimeError(f"FinMind：{r.get('msg')}")
+    return r["data"]
+
+
 @lru_cache(maxsize=1)
 def _stock_futures() -> dict[str, tuple[str, str, int]]:
     """{契約代號: (名稱, 標的股票代號, 每口股數)}；小型個股期貨 100 股，一般 2000 股"""
+    by_name = {name: code for code, name in tw_names()[0].items()}
     out = {}
-    for x in get_json("https://openapi.taifex.com.tw/v1/SingleStockFuturesMargining"):
-        name = x["ContractName"].removesuffix("貨")  # 台積電期貨 → 台積電期
-        out[x["Contract"]] = (name, x["UnderlyingSecurityCode"], 100 if name.startswith("小型") else 2000)
+    for x in _finmind("TaiwanFutOptDailyInfo"):
+        name = x["name"]
+        if x["type"] != "TaiwanFuturesDaily" or not name.endswith("期貨"):
+            continue
+        mini = name.startswith("小型")
+        under = by_name.get(name.removeprefix("小型").removesuffix("期貨"))
+        if under:  # 只收個股期貨（指數、商品期貨對不到股票名稱）
+            out[x["code"]] = (name.removesuffix("貨"), under, 100 if mini else 2000)
     return out
 
 
@@ -95,7 +112,8 @@ def futures_spec(symbol: str) -> tuple[str, str, int] | None:
     sf = _stock_futures()
     if m := re.fullmatch(r"(\w+?)(小)?期", s):
         code, mini = m.group(1), bool(m.group(2))
-        for c, (name, under, mult) in sf.items():
+        # 標準契約代號結尾是 F；結尾是數字的是除權息後的調整型契約，排後面
+        for c, (name, under, mult) in sorted(sf.items(), key=lambda kv: kv[0][-1].isdigit()):
             if under == code and (mult == 100) == mini:
                 return c, name, mult
         return None
@@ -105,29 +123,31 @@ def futures_spec(symbol: str) -> tuple[str, str, int] | None:
     return None
 
 
-def _futures_quotes() -> tuple[date | None, dict[tuple[str, str], tuple[float, float]]]:
-    """期交所每日行情（一般交易時段）。回傳 (資料日期, {(契約, 月份): (結算價, 前日結算價)})"""
-    out, d = {}, None
-    for x in get_json("https://openapi.taifex.com.tw/v1/DailyMarketReportFut"):
-        if x["TradingSession"] != "一般" or not re.fullmatch(r"\d{6}", x["ContractMonth(Week)"]):
+def _futures_daily(contract: str, until: date | None = None) -> tuple[date | None, dict[str, tuple[float, float]]]:
+    """某契約一般交易時段的結算價。回傳 (最新資料日, {月份: (結算價, 前一交易日結算價)})"""
+    until = until or date.today()
+    rows = _finmind("TaiwanFuturesDaily", data_id=contract,
+                    start_date=f"{until - timedelta(days=14):%Y-%m-%d}", end_date=f"{until:%Y-%m-%d}")
+    settle: dict[str, dict[str, float]] = {}  # 月份 → {日期: 結算價}
+    for x in rows:
+        if x["trading_session"] != "position" or not re.fullmatch(r"\d{6}", x["contract_date"]) or not x["settlement_price"]:
             continue
-        try:
-            settle = float(x["SettlementPrice"])
-        except ValueError:
-            continue
-        try:  # 漲跌 = 收盤 - 前日結算價
-            prev = float(x["Last"]) - float(x["Change"])
-        except ValueError:
-            prev = settle
-        out[(x["Contract"], x["ContractMonth(Week)"])] = (settle, prev)
-        d = date(int(x["Date"][:4]), int(x["Date"][4:6]), int(x["Date"][6:]))
-    return d, out
+        settle.setdefault(x["contract_date"], {})[x["date"]] = float(x["settlement_price"])
+    if not settle:
+        return None, {}
+    latest = max(d for by_day in settle.values() for d in by_day)
+    out = {}
+    for month, by_day in settle.items():
+        if latest in by_day:
+            days = sorted(by_day)
+            prev = by_day[days[-2]] if len(days) >= 2 else by_day[latest]
+            out[month] = (by_day[latest], prev)
+    return date.fromisoformat(latest), out
 
 
 def near_month(contract: str) -> str | None:
-    _, q = _futures_quotes()
-    months = sorted(m for c, m in q if c == contract)
-    return months[0] if months else None
+    _, q = _futures_daily(contract)
+    return min(q) if q else None
 
 
 # ---------- 損益 ----------
@@ -199,14 +219,15 @@ def build_holdings(data: dict, trade_date: date) -> Holdings:
             h.stocks.append(p)
 
     if data["futures"]:
-        h.futures_date, quotes = _futures_quotes()
         for contract, pos in data["futures"].items():
             spec = futures_spec(contract)
             name, mult = (spec[1], spec[2]) if spec else (contract, 0)
             sign = 1 if pos["side"] == "多" else -1
             qty, cost, month = int(pos["qty"]), float(pos["cost"]), pos.get("month", "")
             p = Position("期貨", f"{name} {contract} {month}", f"{pos['side']} {qty} 口", cost, None, None)
-            if (q := quotes.get((contract, month))) and mult:
+            fdate, quotes = _futures_daily(contract, until=trade_date)
+            h.futures_date = fdate or h.futures_date
+            if (q := quotes.get(month)) and mult:
                 p.price, p.prev = q
                 p.day_pnl = (p.price - p.prev) * qty * mult * sign
                 p.unrealized = (p.price - cost) * qty * mult * sign

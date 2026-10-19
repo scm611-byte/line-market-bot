@@ -207,7 +207,7 @@ def render_holdings(h: Holdings) -> bytes:
                 c.hline(cur + row_h - 10)
             cur += row_h
         cur += 20
-    c.text(52, height - 35, "損益未扣手續費與稅；期貨以期交所結算價計算", fontsize=10, color=MUTED)
+    c.text(52, height - 35, "損益未扣手續費與稅；期貨以結算價計算（資料來源 FinMind）", fontsize=10, color=MUTED)
     return c.png()
 
 

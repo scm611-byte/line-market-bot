@@ -128,7 +128,7 @@
 
 | 欄位 | 股票 | 期貨 |
 |---|---|---|
-| 收盤／結算價 | 當天收盤價（Yahoo Finance） | 當天**結算價**（期交所，一般交易時段） |
+| 收盤／結算價 | 當天收盤價（Yahoo Finance） | 當天**結算價**（一般交易時段，資料來源 FinMind） |
 | 當日損益 | (今日收盤 − 昨日收盤) × 股數 | (今日結算 − 昨日結算) × 口數 × 乘數，空單正負相反 |
 | 未實現損益 | (今日收盤 − 成本) × 股數 | (今日結算 − 成本) × 口數 × 乘數，空單正負相反 |
 | 股票市值 | 收盤價 × 股數 | — |
@@ -208,7 +208,7 @@ GitHub Actions（每個交易日 16:00）
    ▼
 Render 免費 Web Service（app.py）
    ├─ 證交所 / 櫃買 / Yahoo Finance：大盤、自選股、日 K
-   ├─ 期交所 OpenAPI：期貨結算價、個股期貨代號
+   ├─ FinMind：期貨結算價、個股期貨代號（期交所 OpenAPI 擋海外雲端主機）
    ├─ GitHub API：讀寫 data/portfolio.json
    ├─ 畫三張圖（charts.py），放在 /img/…（網址帶簽章）
    └─ LINE push → 只發給 OWNER_USER_ID
