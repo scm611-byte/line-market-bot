@@ -22,38 +22,20 @@
 ### 運作方式
 
 ```mermaid
+%%{init: {"theme": "neutral"}}%%
 flowchart TB
-    subgraph sched["⏰ 排程・週一～五"]
-        direction LR
-        cron["cron-job.org<br/>14:00 起每 15 分鐘・資料齊就推"]
-        gha["GitHub Actions<br/>16:17 備援"]
-    end
-
-    bot["☁️ Render 免費主機<br/><b>LINE Bot</b><br/>抓資料・算損益・畫三張圖"]
-
-    subgraph data["📊 資料來源"]
-        direction LR
-        twse["證交所／櫃買<br/>加權指數・成交金額"]
-        yahoo["Yahoo Finance<br/>個股收盤・日 K"]
-        finmind["FinMind<br/>期貨結算價"]
-    end
-
-    repo[("GitHub repo<br/>portfolio.json<br/>自選股・庫存")]
-
-    subgraph phone["📱 你"]
-        direction LR
-        line["LINE 平台"]
-        you(["LINE App"])
-    end
+    cron["cron-job.org<br/>14:00 起每 15 分鐘・資料齊就推"]
+    gha["GitHub Actions<br/>16:17 備援"]
+    bot["Render 免費主機・LINE Bot<br/>抓資料・算損益・畫三張圖"]
+    data["資料來源<br/>證交所／櫃買・Yahoo Finance・FinMind"]
+    repo[("GitHub repo<br/>portfolio.json 自選股・庫存")]
+    you(["你的 LINE"])
 
     cron -->|觸發推播| bot
     gha -.->|備援| bot
     bot --> data
     bot <-->|讀寫| repo
-    bot -->|推播三張圖・回覆指令| line
-    line --> you
-    you -->|台股、庫存、買、多…| line
-    line -->|webhook| bot
+    bot <-->|推播三張圖／指令與回覆| you
 ```
 
 ---
