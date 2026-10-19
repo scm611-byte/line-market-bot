@@ -1,4 +1,4 @@
-"""把 Report 畫成兩張圖：摘要卡、近 1 個月日 K 線
+"""把資料畫成圖：盤後摘要卡、近 1 個月日 K 線、我的庫存
 
 顏色依台灣習慣：紅漲綠跌。
 """
@@ -15,6 +15,7 @@ import pandas as pd  # noqa: E402
 from matplotlib import font_manager  # noqa: E402
 
 from market import Quote, Report, date_title  # noqa: E402
+from portfolio import Holdings, Position  # noqa: E402
 
 FONT_DIR = Path(__file__).with_name("fonts")
 for f in FONT_DIR.glob("*.ttf"):
@@ -24,10 +25,10 @@ plt.rcParams["axes.unicode_minus"] = False
 
 UP, DOWN, FLAT = "#E0393E", "#14A35B", "#7A7F87"
 INK, MUTED, LINE, BG, CARD, ACCENT = "#1F2328", "#6B7280", "#E5E7EB", "#F3F4F6", "#FFFFFF", "#1E3A8A"
-MA_COLORS = {5: "#F59E0B", 20: "#8B5CF6"}
+MA20_COLOR = "#8B5CF6"
 
 WIDTH_PX, DPI = 1080, 150
-_lock = threading.Lock()  # matplotlib 不是 thread-safe
+LOCK = threading.Lock()  # matplotlib 不是 thread-safe，呼叫端畫圖時要拿這把鎖
 
 
 def _color(v: float) -> str:
@@ -41,91 +42,90 @@ def _png(fig) -> bytes:
     return buf.getvalue()
 
 
-def _title(r: Report) -> str:
-    return "台股盤後" if r.market == "tw" else "美股收盤"
+class _Canvas:
+    """以「由上往下的像素」定位文字與色塊的直式卡片"""
 
+    def __init__(self, height: int):
+        self.h = height
+        self.fig = plt.figure(figsize=(WIDTH_PX / DPI, height / DPI), dpi=DPI, facecolor=BG)
 
-# ---------- 摘要卡 ----------
-def _quote_cells(q: Quote) -> tuple[str, str, str, str]:
-    if q.change == 0:
-        return q.label, f"{q.close:,.{q.digits}f}", "平盤", FLAT
-    arrow = "▲" if q.change > 0 else "▼"
-    return (
-        q.label,
-        f"{q.close:,.{q.digits}f}",
-        f"{arrow}{abs(q.change):,.{q.digits}f}  {q.pct:+.2f}%",
-        _color(q.change),
-    )
+    def y(self, px: float) -> float:
+        return 1 - px / self.h
 
-
-def render_summary(r: Report) -> bytes:
-    # 每個 section：(標題, [(左, 中, 右, 右邊顏色)])
-    sections: list[tuple[str, list[tuple[str, str, str, str]]]] = []
-    rows = [_quote_cells(q) for q in r.indices]
-    if r.turnover is not None:
-        rows.append(("成交金額", f"{r.turnover:,.0f} 億", "", INK))
-    sections.append(("大盤" if r.market == "tw" else "指數 / 匯率", rows))
-    if r.institutional:
-        sections.append((
-            "三大法人買賣超（億）",
-            [(k, "", f"{v:+,.1f}", _color(v)) for k, v in r.institutional.items()],
-        ))
-    if r.watchlist:
-        sections.append(("自選股", [_quote_cells(q) for q in r.watchlist]))
-
-    header, sec_h, row_h, pad = 150, 70, 62, 40
-    height = header + sum(sec_h + row_h * len(rs) + 20 for _, rs in sections) + pad
-    fig = plt.figure(figsize=(WIDTH_PX / DPI, height / DPI), dpi=DPI, facecolor=BG)
-
-    def y(px: float) -> float:  # 由上往下的像素 → figure 座標
-        return 1 - px / height
-
+    @staticmethod
     def x(px: float) -> float:
         return px / WIDTH_PX
 
-    # 標題列
-    fig.patches.append(plt.Rectangle((0, y(header - 20)), 1, (header - 20) / height,
-                                     transform=fig.transFigure, color=ACCENT, zorder=0))
-    fig.text(x(48), y(62), _title(r), fontsize=26, weight="bold", color="white", va="center")
-    fig.text(x(48), y(104), date_title(r.trade_date), fontsize=15, color="#C7D2FE", va="center")
+    def text(self, x, y, s, **kw):
+        kw.setdefault("va", "center")
+        self.fig.text(self.x(x), self.y(y), s, **kw)
+
+    def rect(self, x, y, w, h, color):
+        self.fig.patches.append(plt.Rectangle((self.x(x), self.y(y + h)), self.x(w), h / self.h,
+                                              transform=self.fig.transFigure, color=color, zorder=0))
+
+    def hline(self, y, x0=52, x1=1028):
+        self.fig.add_artist(plt.Line2D([self.x(x0), self.x(x1)], [self.y(y)] * 2,
+                                       transform=self.fig.transFigure, color=LINE, lw=0.8))
+
+    def header(self, title: str, subtitle: str, height: int = 130):
+        self.rect(0, 0, WIDTH_PX, height, ACCENT)
+        self.text(48, 52, title, fontsize=26, weight="bold", color="white")
+        self.text(48, 98, subtitle, fontsize=15, color="#C7D2FE")
+
+    def png(self) -> bytes:
+        return _png(self.fig)
+
+
+def _change_text(q: Quote) -> tuple[str, str]:
+    if q.change == 0:
+        return "平盤", FLAT
+    arrow = "▲" if q.change > 0 else "▼"
+    return f"{arrow}{abs(q.change):,.{q.digits}f}  {q.pct:+.2f}%", _color(q.change)
+
+
+# ---------- 摘要卡 ----------
+def render_summary(r: Report) -> bytes:
+    chg, chg_color = _change_text(r.index)
+    sections = [("大盤", [(r.index.label, f"{r.index.close:,.2f}", chg, chg_color),
+                          ("成交金額", f"{r.turnover:,.0f} 億", "", INK)])]
+    if r.watchlist:
+        sections.append(("自選股", [(q.label, f"{q.close:,.2f}", *_change_text(q)) for q in r.watchlist]))
+
+    header, sec_h, row_h = 150, 70, 62
+    c = _Canvas(header + sum(sec_h + row_h * len(rs) + 20 for _, rs in sections) + 30)
+    c.header("台股盤後", date_title(r.trade_date))
 
     cur = header
-    for heading, rs in sections:
-        card_h = sec_h + row_h * len(rs) - 10
-        fig.patches.append(plt.Rectangle((x(28), y(cur + card_h)), x(WIDTH_PX - 56), card_h / height,
-                                         transform=fig.transFigure, color=CARD, zorder=0))
-        fig.text(x(52), y(cur + 38), heading, fontsize=15, weight="bold", color=ACCENT, va="center")
+    for heading, rows in sections:
+        c.rect(28, cur, WIDTH_PX - 56, sec_h + row_h * len(rows) - 10, CARD)
+        c.text(52, cur + 38, heading, fontsize=15, weight="bold", color=ACCENT)
         cur += sec_h
-        for i, (left, mid, right, rc) in enumerate(rs):
+        for i, (left, mid, right, rc) in enumerate(rows):
             cy = cur + row_h / 2 - 8
-            fig.text(x(52), y(cy), left, fontsize=15, color=INK, va="center")
-            fig.text(x(640), y(cy), mid, fontsize=15, color=INK, va="center", ha="right", weight="bold")
-            fig.text(x(1028), y(cy), right, fontsize=15, color=rc, va="center", ha="right", weight="bold")
-            if i < len(rs) - 1:
-                fig.add_artist(plt.Line2D([x(52), x(1028)], [y(cur + row_h - 8)] * 2,
-                                          transform=fig.transFigure, color=LINE, lw=0.8))
+            c.text(52, cy, left, fontsize=15, color=INK)
+            c.text(640, cy, mid, fontsize=15, color=INK, ha="right", weight="bold")
+            c.text(1028, cy, right, fontsize=15, color=rc, ha="right", weight="bold")
+            if i < len(rows) - 1:
+                c.hline(cur + row_h - 8)
             cur += row_h
         cur += 20
-    return _png(fig)
+    return c.png()
 
 
 # ---------- 日 K 線 ----------
 def _draw_kline(ax, q: Quote) -> None:
     h = q.ohlc.copy()
-    for n in MA_COLORS:
-        h[f"MA{n}"] = h["Close"].rolling(n).mean()
-    start = h.index[-1] - pd.DateOffset(months=1)
-    h = h[h.index > start]
+    h["MA20"] = h["Close"].rolling(20).mean()
+    h = h[h.index > h.index[-1] - pd.DateOffset(months=1)]
 
     xs = range(len(h))
-    up = h["Close"] >= h["Open"]
-    colors = [UP if u else DOWN for u in up]
+    colors = [UP if u else DOWN for u in h["Close"] >= h["Open"]]
     ax.vlines(xs, h["Low"], h["High"], colors=colors, lw=1)
     body_low = h[["Open", "Close"]].min(axis=1)
     body_h = (h["Close"] - h["Open"]).abs().clip(lower=(h["High"] - h["Low"]).max() * 0.004)
     ax.bar(xs, body_h, bottom=body_low, width=0.65, color=colors, edgecolor=colors, lw=0.6)
-    for n, c in MA_COLORS.items():
-        ax.plot(xs, h[f"MA{n}"], color=c, lw=1.1, label=f"MA{n}")
+    ax.plot(xs, h["MA20"], color=MA20_COLOR, lw=1.2)
 
     step = max(1, len(h) // 4)
     ticks = list(range(0, len(h), step))
@@ -154,10 +154,9 @@ def render_kline(r: Report) -> bytes | None:
     fig, axes = plt.subplots(rows, cols, figsize=(WIDTH_PX / DPI, height / DPI), dpi=DPI, facecolor=BG, squeeze=False)
     fig.subplots_adjust(left=0.04, right=0.9, top=1 - (header + 90) / height, bottom=50 / height,
                         wspace=0.28, hspace=360 / 440 * 0.55 / 0.62)
-    fig.text(0.04, 1 - 48 / height, f"{_title(r)}・近 1 個月日 K", fontsize=18, weight="bold", color=INK, va="center")
+    fig.text(0.04, 1 - 48 / height, "台股・近 1 個月日 K", fontsize=18, weight="bold", color=INK, va="center")
     fig.text(0.04, 1 - 95 / height, date_title(r.trade_date), fontsize=11, color=MUTED, va="center")
-    fig.text(0.62, 1 - 95 / height, "━ MA5", fontsize=10, color=MA_COLORS[5], va="center")
-    fig.text(0.76, 1 - 95 / height, "━ MA20", fontsize=10, color=MA_COLORS[20], va="center")
+    fig.text(0.76, 1 - 95 / height, "━ MA20", fontsize=10, color=MA20_COLOR, va="center")
 
     for ax, q in zip(axes.flat, items):
         ax.set_facecolor(CARD)
@@ -167,9 +166,59 @@ def render_kline(r: Report) -> bytes | None:
     return _png(fig)
 
 
-def render_all(r: Report) -> list[bytes]:
-    with _lock:
-        imgs = [render_summary(r)]
-        if k := render_kline(r):
-            imgs.append(k)
-    return imgs
+# ---------- 我的庫存 ----------
+def _money(v: float) -> str:
+    return f"{v:+,.0f}" if v else "0"
+
+
+def render_holdings(h: Holdings) -> bytes:
+    sections = [(name, ps) for name, ps in (("股票", h.stocks), ("期貨", h.futures)) if ps]
+    header, total_h, sec_h, row_h = 150, 190, 66, 104
+    height = header + total_h + sum(sec_h + row_h * len(ps) + 20 for _, ps in sections) + 70
+    c = _Canvas(height)
+    sub = f"資料日 {date_title(h.trade_date)}"
+    if h.futures and h.futures_date and h.futures_date != h.trade_date:
+        sub += f"｜期貨 {h.futures_date:%m/%d}"
+    c.header("我的庫存", sub)
+
+    # 合計
+    cur = header
+    c.rect(28, cur, WIDTH_PX - 56, total_h - 20, CARD)
+    for i, (label, v) in enumerate([("當日損益", h.day_pnl), ("未實現損益", h.unrealized)]):
+        x = 52 + i * 500
+        c.text(x, cur + 45, label, fontsize=13, color=MUTED)
+        c.text(x, cur + 105, _money(v), fontsize=26, weight="bold", color=_color(v))
+    if h.stocks:
+        c.text(52, cur + 150, f"股票市值 {h.stock_value:,.0f}", fontsize=12, color=MUTED)
+    cur += total_h
+
+    if not sections:
+        c.text(52, cur + 20, "目前沒有庫存。傳「說明」看如何新增。", fontsize=15, color=MUTED)
+
+    for heading, ps in sections:
+        c.rect(28, cur, WIDTH_PX - 56, sec_h + row_h * len(ps) - 10, CARD)
+        c.text(52, cur + 36, heading, fontsize=15, weight="bold", color=ACCENT)
+        c.text(640, cur + 36, "收盤" if heading == "股票" else "結算價", fontsize=11, color=MUTED, ha="right")
+        c.text(1028, cur + 36, "當日／未實現", fontsize=11, color=MUTED, ha="right")
+        cur += sec_h
+        for i, p in enumerate(ps):
+            _holding_row(c, cur, p)
+            if i < len(ps) - 1:
+                c.hline(cur + row_h - 10)
+            cur += row_h
+        cur += 20
+    c.text(52, height - 35, "損益未扣手續費與稅；期貨以期交所結算價計算", fontsize=10, color=MUTED)
+    return c.png()
+
+
+def _holding_row(c: _Canvas, top: float, p: Position) -> None:
+    l1, l2 = top + 28, top + 66
+    c.text(52, l1, p.label, fontsize=14, weight="bold", color=INK)
+    c.text(52, l2, f"{p.qty_text}・成本 {p.cost:,.2f}", fontsize=12, color=MUTED)
+    if p.price is None:
+        c.text(1028, l1, p.note, fontsize=13, color=MUTED, ha="right")
+        return
+    c.text(640, l1, f"{p.price:,.2f}", fontsize=14, weight="bold", color=INK, ha="right")
+    c.text(640, l2, f"{p.pct:+.2f}%", fontsize=12, color=_color(p.price - p.prev), ha="right")
+    c.text(1028, l1, _money(p.day_pnl), fontsize=14, weight="bold", color=_color(p.day_pnl), ha="right")
+    c.text(1028, l2, _money(p.unrealized), fontsize=12, color=_color(p.unrealized), ha="right")

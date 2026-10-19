@@ -7,16 +7,23 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --threads 4
     healthCheckPath: /
+    # LINE 指令更新庫存時會 commit data/portfolio.json，這種變更不需要重新部署
+    buildFilter:
+      ignoredPaths:
+        - data/**
+        - README.md
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.9
-      - key: TW_WATCHLIST
-        value: 2330,2317,2454,6488
-      - key: US_WATCHLIST
-        value: NVDA,AAPL,MSFT,TSM
+      - key: GITHUB_REPO
+        value: scm611-byte/line-market-bot
       - key: LINE_CHANNEL_SECRET
         sync: false
       - key: LINE_CHANNEL_ACCESS_TOKEN
         sync: false
       - key: CRON_SECRET
+        sync: false
+      - key: OWNER_USER_ID
+        value: U210e34a9b98fe1aae8cd71da8bd1fa25
+      - key: GITHUB_TOKEN
         sync: false
