@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from functools import lru_cache
@@ -267,7 +268,10 @@ def _check_stock(code: str) -> str | None:
 
 def handle_command(text: str) -> str | None:
     """處理庫存 / 自選股指令。不是這類指令就回傳 None。"""
-    t = re.sub(r"\s+", " ", text.strip())
+    # 全形轉半形；指令詞後面沒空格也接受（例如「買00631L 2 35.56」）
+    t = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text).strip())
+    t = re.sub(r"^(買|賣|設定|多|空|平|刪除|自選)(?=[^\s])", r"\1 ", t)
+    t = re.sub(r"^自選 (加|刪)(?=[^\s])", r"自選 \1 ", t)
 
     # 自選股
     if t == "自選":
