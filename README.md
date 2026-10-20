@@ -218,6 +218,7 @@ flowchart TB
    - `202` 且內容是 `waiting for: …`：還在等這些資料更新，下一次會再試。
    - `204`：證交所今天沒有行情（休市，或 14:30 前還沒公布）。
    - `Timeout`：Render 喚醒太慢，下一次會再試。
+   - `Failed (output too large)`：排程少了 `Accept: */*` 這個 header。Render 主機休眠時，看起來像瀏覽器的請求會直接拿到一頁 258KB 的「Application loading」網頁，不會叫醒主機。兩個排程（叫醒、推播）的 ADVANCED → Headers 都要有 `Accept` = `*/*`。
 3. 也可以到 GitHub → Actions → 台股盤後推播，看備援那一次的結果：
    - 綠色勾、最後一行 `HTTP 200`：已送出，可能是 LINE 那邊延遲。
    - 最後一行 `HTTP 204`：Bot 判斷今天沒有行情（休市或證交所資料還沒公布）。
