@@ -24,7 +24,7 @@
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
 flowchart TB
-    cron["cron-job.org<br/>14:00 起每 15 分"]
+    cron["cron-job.org → GitHub Actions<br/>14:00 起每 15 分"]
     gha["GitHub Actions<br/>16:17 備援"]
     bot["LINE Bot（Render）<br/>抓資料・算損益・畫圖"]
     data["資料來源<br/>證交所・Yahoo・FinMind"]
@@ -55,7 +55,8 @@ flowchart TB
 ## 1. 每天什麼時候推播
 
 - **週一到週五，資料一到齊就推**，通常在 **14:30～15:30** 之間（台北時間）。
-  - [cron-job.org](https://console.cron-job.org/jobs) 從 14:00 起每 15 分鐘觸發一次（13:55 先叫醒休眠中的 Render）。
+  - [cron-job.org](https://console.cron-job.org/jobs) 從 14:00 起每 15 分鐘呼叫 GitHub API，觸發 GitHub Actions 的「台股盤後推播」，再由 Actions 叫醒 Render 並呼叫推播。
+    （不讓 cron-job.org 直接呼叫 Render：Render 主機休眠時會把 cron-job.org 的請求當成瀏覽器，回一頁「Application loading」網頁而不叫醒主機。）
   - 每次觸發，Bot 會檢查證交所行情、自選股與庫存股票的收盤價、期貨結算價**是否都已更新到當天**；有缺就先不推，等下一次。
   - **16:00 是最後期限**：還有沒到齊的也照推，缺的部分用前一個交易日的價格（圖上期貨會標示資料日期）。
 - **備援**：GitHub Actions 在 16:17 之後也會觸發一次（GitHub 的排程常延遲數小時）。Bot 一天只推一次，所以不會收到兩份。
@@ -212,16 +213,12 @@ flowchart TB
 
 **Q：今天沒收到推播？**
 1. 先確認是不是休市日。
-2. 到 [cron-job.org](https://console.cron-job.org/jobs) →「LINE Bot 台股盤後推播」→ **HISTORY**，看 14:00～16:00 每一次的結果：
-   - `200` 且內容是 `TW pushed`：已送出（後面有 `stale` 代表 16:00 強制推播時還有資料沒到齊）。
-   - `200` 且內容是 `already pushed today`：今天已經推過了。
-   - `202` 且內容是 `waiting for: …`：還在等這些資料更新，下一次會再試。
-   - `204`：證交所今天沒有行情（休市，或 14:30 前還沒公布）。
-   - `Timeout`：Render 喚醒太慢，下一次會再試。
-   - `Failed (output too large)`：排程少了 `Accept: */*` 這個 header。Render 主機休眠時，看起來像瀏覽器的請求會直接拿到一頁 258KB 的「Application loading」網頁，不會叫醒主機。兩個排程（叫醒、推播）的 ADVANCED → Headers 都要有 `Accept` = `*/*`。
-3. 也可以到 GitHub → Actions → 台股盤後推播，看備援那一次的結果：
-   - 綠色勾、最後一行 `HTTP 200`：已送出，可能是 LINE 那邊延遲。
-   - 最後一行 `HTTP 204`：Bot 判斷今天沒有行情（休市或證交所資料還沒公布）。
+2. 到 [cron-job.org](https://console.cron-job.org/jobs) →「LINE Bot 台股盤後推播（經 GitHub）」→ **HISTORY**：每一次都應該是 `204`（代表 GitHub 收到觸發）。失敗的話通常是 GitHub token 失效。
+3. 到 GitHub → Actions →「台股盤後推播」，看 14:00～16:45 每一次的「Trigger push」最後一行：
+   - `TW pushed`：已送出（後面有 `stale` 代表 16:00 強制推播時還有資料沒到齊）。
+   - `already pushed today`：今天已經推過了。
+   - `HTTP 202`、`waiting for: …`：還在等這些資料更新，下一次會再試。
+   - `HTTP 204`：證交所今天沒有行情（休市，或 14:30 前還沒公布）。
    - 紅色叉叉：點進去看錯誤；常見原因是 Render 正在維護或喚醒失敗，可以按 **Re-run jobs** 重跑。
 3. 如果連續 60 天 repo 都沒有任何 commit，GitHub 會自動停用排程，會寄信通知；到 Actions 頁面按 **Enable workflow** 即可。（用 LINE 改庫存也會產生 commit。）
 
@@ -239,7 +236,7 @@ FinMind 額度用完或 token 失效。到 FinMind 網站 → 使用者資訊確
 Yahoo Finance 偶爾抓不到資料，或那檔股票當天停牌。隔天通常會恢復。
 
 **Q：想換推播時間？**
-1. 到 [cron-job.org](https://console.cron-job.org/jobs)，兩個排程都按 **EDIT** → Execution schedule 的 Crontab expression 改時間（時區已經是 Asia/Taipei）。目前是叫醒 `55 13 * * 1-5`、推播 `*/15 14-16 * * 1-5`（14:00～16:45 每 15 分鐘）。
+1. 到 [cron-job.org](https://console.cron-job.org/jobs)，兩個排程都按 **EDIT** → Execution schedule 的 Crontab expression 改時間（時區已經是 Asia/Taipei）。目前是「LINE Bot 台股盤後推播（經 GitHub）」`*/15 14-16 * * 1-5`（14:00～16:45 每 15 分鐘）。
 2. 最後期限在 `app.py` 的 `FORCE_PUSH_AT`（預設 `"16:00"`）。
 3. 備援的 GitHub 排程在 `.github/workflows/push.yml` 的 `cron`，GitHub 用 UTC 時間（台北時間減 8 小時），建議設在 cron-job.org 之後十幾分鐘，避開整點。
 
@@ -255,29 +252,31 @@ Yahoo Finance 偶爾抓不到資料，或那檔股票當天停牌。隔天通常
 sequenceDiagram
     autonumber
     participant C as cron-job.org
+    participant A as GitHub Actions
     participant B as Render（app.py）
     participant G as GitHub repo
     participant D as 證交所／Yahoo／FinMind
     participant L as LINE
 
-    C->>B: 13:55 GET /（叫醒休眠的主機）
     loop 14:00 起每 15 分鐘
-    C->>B: POST /tasks/tw（X-Cron-Secret）
+    C->>A: GitHub API 觸發 push.yml
+    A->>B: GET /（叫醒休眠的主機）
+    A->>B: POST /tasks/tw（X-Cron-Secret）
     B->>G: 讀 portfolio.json
     alt 今天已推播過（last_push = 今天）
-        B-->>C: 200 already pushed today
+        B-->>A: 200 already pushed today
     else 今天休市／證交所還沒公布
-        B-->>C: 204
+        B-->>A: 204
     else 有資料還沒更新到當天，且還沒到 16:00
         B->>D: 抓大盤、自選股日 K、庫存報價、期貨結算價
-        B-->>C: 202 waiting for …（下一次再試）
+        B-->>A: 202 waiting for …（下一次再試）
     else 資料都到齊（或已經 16:00）
         B->>D: 抓大盤、自選股日 K、庫存報價、期貨結算價
         B->>B: 畫三張圖，存在 /img/…（網址帶簽章）
         B->>L: push 三張圖給 OWNER_USER_ID
         L->>B: 抓圖片
         B->>G: 記錄 last_push、push_log
-        B-->>C: 200 TW pushed
+        B-->>A: 200 TW pushed
     end
     end
     Note over B,G: GitHub Actions 16:17 之後再觸發一次當備援，<br/>因為有 last_push 檢查，不會重複推播
@@ -324,7 +323,8 @@ sequenceDiagram
 | `GITHUB_TOKEN` | Render → Environment | 讀寫 `data/portfolio.json` 用，見下方 |
 | `FINMIND_TOKEN` | Render → Environment | 期貨報價用；FinMind 免費帳號 → 使用者資訊 → api token（沒帶的話雲端主機會被擋 402） |
 | `GITHUB_REPO` | `render.yaml` | 預設 `scm611-byte/line-market-bot` |
-| `CRON_SECRET` | Render → Environment、GitHub → Settings → Secrets、cron-job.org 推播排程的 Header `X-Cron-Secret` | 保護 `/tasks/tw` 的隨機字串，兩邊要一樣 |
+| `CRON_SECRET` | Render → Environment、GitHub → Settings → Secrets | 保護 `/tasks/tw` 的隨機字串，兩邊要一樣 |
+| GitHub token（觸發用） | cron-job.org 排程的 `Authorization` header | Fine-grained token `line-dram-bot-trigger`，只開 Actions 讀寫，與 DRAM Bot 共用 |
 | `BOT_URL` | GitHub → Settings → Secrets | Render 服務網址 |
 
 LINE Webhook URL 設為 `<BOT_URL>/callback`。
